@@ -97,7 +97,7 @@ const httpServer = http.createServer((req, res) => {
 });
 
 function serveStatus(req, res) {
-  const wsUrl = `wss://${req.headers.host}`;
+  const wsUrl = 'wss://physics-friend-server.onrender.com';
   const hasBuild = fs.existsSync(path.join(STATIC_DIR, 'Build'));
   let rows = '';
   for (const [code, r] of rooms) {
