@@ -100,7 +100,7 @@ const httpServer = http.createServer((req, res) => {
     const ext = path.extname(fp).toLowerCase();
     const ct = MIME[ext] || 'application/octet-stream';
     const enc = encodingHeaders(fp);
-    res.writeHead(200, { 'Content-Type':ct, 'Cache-Control':'public, max-age=3600', ...enc });
+    res.writeHead(200, { 'Content-Type':ct, 'Cache-Control':'no-store, no-cache, must-revalidate', 'Pragma':'no-cache', 'Expires':'0', ...enc });
     fs.createReadStream(fp).pipe(res);
   });
 });
@@ -250,5 +250,6 @@ function genCode() { const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s; do{s='';
 
 process.on('SIGINT', () => { wss.clients.forEach(ws=>ws.close()); httpServer.close(()=>process.exit(0)); });
 setInterval(() => { if (rooms.size>0||wss.clients.size>0) console.log(`[S] 房间:${rooms.size} 在线:${wss.clients.size}`); }, 60000);
+
 
 
