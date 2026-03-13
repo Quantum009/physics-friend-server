@@ -1,4 +1,4 @@
-// ============================================================
+﻿// ============================================================
 // server.js — PhysicsFriends 一体化服务器
 //
 // 同时提供：
@@ -23,6 +23,9 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = parseInt(process.env.PORT, 10) || 8080;
 const STATIC_DIR = path.join(__dirname, 'public');
+const ENABLE_CROSS_ORIGIN_ISOLATION =
+  process.env.ENABLE_CROSS_ORIGIN_ISOLATION === '1' ||
+  process.env.ENABLE_CROSS_ORIGIN_ISOLATION === 'true';
 const HEARTBEAT_INTERVAL = 30000;
 const MAX_PLAYERS_PER_ROOM = 4;
 const ROOM_CODE_LENGTH = 4;
@@ -58,10 +61,16 @@ function encodingHeaders(fp) {
 // HTTP 服务器 — 静态文件 + 状态页
 // ================================================================
 const httpServer = http.createServer((req, res) => {
-  // 跨域 + WebGL SharedArrayBuffer 所需头
+  // 基础跨域头
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+
+  // 只在线程版 WebGL 明确需要时开启 COEP/COOP。
+  // 默认关闭，避免第三方图片 / 浏览器扩展资源被拦截。
+  if (ENABLE_CROSS_ORIGIN_ISOLATION) {
+    res.setHeader('Cross-Origin-Embedder-Policy', 'require-corp');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
 
   if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -114,6 +123,7 @@ h3{color:#aab;margin-top:24px;font-size:16px}.warn{background:#2a1a10;border:1px
 .dim{color:#666;font-size:13px;margin-top:30px}</style></head><body><div class="w">
   <h1>🎲 PhysicsFriends</h1><p class="ok">✅ 服务器运行中</p>
   <div class="url"><span class="l">WebSocket 地址</span><code>${wsUrl}</code></div>
+  console.log(  隔离  → );
   ${!hasBuild?'<div class="warn">⚠️ <b>WebGL 尚未上传</b><br>将 Unity WebGL 构建产物放到 <code>public/Build/</code>，index.html 放到 <code>public/</code>，即可通过浏览器直接玩。</div>':''}
   <h3>📊 状态</h3><table><tr><td>房间</td><td><b>${rooms.size}</b></td></tr><tr><td>在线</td><td><b>${wss.clients.size}</b></td></tr><tr><td>运行</td><td>${(process.uptime()/60)|0}分钟</td></tr></table>
   <h3>🏠 房间</h3><table><tr><th>房间码</th><th>人数</th><th>状态</th><th>玩家</th></tr>${rows||'<tr><td colspan="4" style="color:#555">暂无</td></tr>'}</table>
@@ -240,3 +250,5 @@ function genCode() { const c='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s; do{s='';
 
 process.on('SIGINT', () => { wss.clients.forEach(ws=>ws.close()); httpServer.close(()=>process.exit(0)); });
 setInterval(() => { if (rooms.size>0||wss.clients.size>0) console.log(`[S] 房间:${rooms.size} 在线:${wss.clients.size}`); }, 60000);
+
+
