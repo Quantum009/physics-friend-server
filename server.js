@@ -90,7 +90,7 @@ const httpServer = http.createServer((req, res) => {
   if (urlPath === '/') urlPath = '/index.html';
   const fp = path.join(STATIC_DIR, urlPath);
 
-  if (!fp.startsWith(STATIC_DIR)) { res.writeHead(403); return res.end(); }
+  if (fp !== STATIC_DIR && !fp.startsWith(STATIC_DIR + path.sep)) { res.writeHead(403); return res.end(); }
 
   fs.stat(fp, (err, st) => {
     if (err || !st.isFile()) {
@@ -123,7 +123,6 @@ h3{color:#aab;margin-top:24px;font-size:16px}.warn{background:#2a1a10;border:1px
 .dim{color:#666;font-size:13px;margin-top:30px}</style></head><body><div class="w">
   <h1>🎲 PhysicsFriends</h1><p class="ok">✅ 服务器运行中</p>
   <div class="url"><span class="l">WebSocket 地址</span><code>${wsUrl}</code></div>
-  console.log(  隔离  → );
   ${!hasBuild?'<div class="warn">⚠️ <b>WebGL 尚未上传</b><br>将 Unity WebGL 构建产物放到 <code>public/Build/</code>，index.html 放到 <code>public/</code>，即可通过浏览器直接玩。</div>':''}
   <h3>📊 状态</h3><table><tr><td>房间</td><td><b>${rooms.size}</b></td></tr><tr><td>在线</td><td><b>${wss.clients.size}</b></td></tr><tr><td>运行</td><td>${(process.uptime()/60)|0}分钟</td></tr></table>
   <h3>🏠 房间</h3><table><tr><th>房间码</th><th>人数</th><th>状态</th><th>玩家</th></tr>${rows||'<tr><td colspan="4" style="color:#555">暂无</td></tr>'}</table>
@@ -181,14 +180,18 @@ function handleJoinRoom(ws, msg) {
   const code = (msg.code||'').toUpperCase(), name = msg.name||'玩家', room = rooms.get(code);
   if (!room) return sendError(ws, `房间 ${code} 不存在`);
   if (room.gameStarted) return sendError(ws, '游戏已开始');
-  if (room.players.length >= MAX_PLAYERS_PER_ROOM) return sendError(ws, '房间已满');
+  if (room.players.filter(Boolean).length >= MAX_PLAYERS_PER_ROOM) return sendError(ws, '房间已满');
   handleDisconnect(ws, true);
-  const pi = room.players.length;
-  room.players.push({ ws, name, playerIndex:pi, alive:true });
+  // 复用断线留下的空位，避免 players 数组无限增长、索引与槽位错位
+  let pi = room.players.indexOf(null);
+  if (pi === -1) pi = room.players.length;
+  room.players[pi] = { ws, name, playerIndex:pi, alive:true };
   wsToRoom.set(ws, { roomCode:code, playerIndex:pi });
   send(ws, { type:'room_joined', code, playerIndex:pi });
-  room.players.forEach(p => { if (p.ws !== ws && p.ws.readyState === WebSocket.OPEN) send(p.ws, { type:'player_joined', playerIndex:pi, name }); });
-  room.players.forEach(p => { if (p.ws !== ws) send(ws, { type:'player_joined', playerIndex:p.playerIndex, name:p.name }); });
+  // 通知已有玩家有新人加入（跳过 null 空位，否则 p.ws 会抛异常）
+  room.players.forEach(p => { if (p && p.ws !== ws && p.ws.readyState === WebSocket.OPEN) send(p.ws, { type:'player_joined', playerIndex:pi, name }); });
+  // 把已有玩家名单补发给新人
+  room.players.forEach(p => { if (p && p.ws !== ws) send(ws, { type:'player_joined', playerIndex:p.playerIndex, name:p.name }); });
   console.log(`[Room] ${name}→${code} #${pi}`);
 }
 
@@ -196,7 +199,7 @@ function handleStartGame(ws) {
   const i = wsToRoom.get(ws); if (!i) return sendError(ws, '未在房间');
   const r = rooms.get(i.roomCode); if (!r) return;
   if (i.playerIndex !== r.hostIndex) return sendError(ws, '只有房主可以开始');
-  if (r.players.length < 2) return sendError(ws, '至少2人');
+  if (r.players.filter(Boolean).length < 2) return sendError(ws, '至少2人');
   r.gameStarted = true;
   r.players.forEach(p => { if (p && p.ws.readyState === WebSocket.OPEN) send(p.ws, { type:'game_started' }); });
   console.log(`[Room] ${i.roomCode} 开始 ${r.players.length}人`);
