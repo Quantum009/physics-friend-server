@@ -106,7 +106,10 @@ const httpServer = http.createServer((req, res) => {
 });
 
 function serveStatus(req, res) {
-  const wsUrl = 'wss://physics-friend-server.onrender.com';
+  // 跟随实际访问地址（IP:端口 或域名），http→ws / https→wss
+  const host = req.headers.host || `0.0.0.0:${PORT}`;
+  const scheme = (req.socket && req.socket.encrypted) ? 'wss' : 'ws';
+  const wsUrl = `${scheme}://${host}`;
   const hasBuild = fs.existsSync(path.join(STATIC_DIR, 'Build'));
   let rows = '';
   for (const [code, r] of rooms) {
