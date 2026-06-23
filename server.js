@@ -33,6 +33,11 @@ const ROOM_CODE_LENGTH = 4;
 const rooms = new Map();
 const wsToRoom = new Map();
 
+// 回合计时器（每个房间独立）
+const TURN_TIMEOUT_SEC = 60;               // 每人每回合最长 60 秒
+const TICK_INTERVAL_MS = 1000;             // 每秒推一次倒计时
+const roomTimers = new Map();              // roomCode → { deadline, currentPlayer, intervalId }
+
 // ---- MIME 类型（含 Unity WebGL 特殊格式）----
 const MIME = {
   '.html':'text/html; charset=utf-8', '.js':'application/javascript',
@@ -260,12 +265,70 @@ function handleStartGame(ws) {
   if (r.players.filter(Boolean).length < 2) return sendError(ws, '至少2人');
   r.gameStarted = true;
   r.players.forEach(p => { if (p && p.ws.readyState === WebSocket.OPEN) send(p.ws, { type:'game_started' }); });
+  startTurnTimer(r, 0);  // 服务端启动回合计时，从玩家0开始
   console.log(`[Room] ${i.roomCode} 开始 ${r.players.length}人`);
+}
+
+// ================================================================
+// 服务端权威：回合计时器
+// ================================================================
+
+function startTurnTimer(room, playerIndex) {
+  stopTurnTimer(room);
+  const deadline = Date.now() + TURN_TIMEOUT_SEC * 1000;
+  const ti = { deadline, currentPlayer: playerIndex, startedAt: Date.now() };
+  roomTimers.set(room.code, ti);
+
+  broadcastRoom(room, { type:'turn_start', playerIndex, timeoutSec:TURN_TIMEOUT_SEC });
+  console.log(`[Timer] ${room.code} 玩家${playerIndex} 回合开始，${TURN_TIMEOUT_SEC}s`);
+
+  // 每秒推送倒计时
+  ti.intervalId = setInterval(() => {
+    const remaining = Math.max(0, Math.ceil((ti.deadline - Date.now()) / 1000));
+    broadcastRoom(room, { type:'turn_tick', playerIndex, remaining });
+    if (remaining <= 0) {
+      stopTurnTimer(room);
+      broadcastRoom(room, { type:'turn_timeout', playerIndex });
+      console.log(`[Timer] ${room.code} 玩家${playerIndex} 超时`);
+    }
+  }, TICK_INTERVAL_MS);
+}
+
+function stopTurnTimer(room) {
+  const ti = roomTimers.get(room.code);
+  if (!ti) return;
+  if (ti.intervalId) clearInterval(ti.intervalId);
+  roomTimers.delete(room.code);
+}
+
+function broadcastRoom(room, msg) {
+  room.players.forEach(p => { if (p && p.ws.readyState === WebSocket.OPEN) send(p.ws, msg); });
 }
 
 function handleToHost(ws, msg) {
   const i = wsToRoom.get(ws); if (!i) return;
   const r = rooms.get(i.roomCode); if (!r) return;
+
+  // 服务端截获权威消息（不转发给 Host，直接处理）
+  let payload = msg.payload;
+  if (typeof payload === 'string') {
+    try { payload = JSON.parse(payload); } catch(_) {}
+  }
+  if (payload && typeof payload === 'object') {
+    if (payload.type === 'roll_dice') {
+      const value = Math.floor(Math.random() * 6) + 1;
+      broadcastRoom(r, { type:'dice_result', playerIndex:i.playerIndex, value, context:payload.context||'' });
+      console.log(`[Dice] ${r.code} 玩家${i.playerIndex} 掷出 ${value}`);
+      return;
+    }
+    if (payload.type === 'turn_ended') {
+      stopTurnTimer(r);
+      console.log(`[Timer] ${r.code} Host 通知回合结束`);
+      return;
+    }
+  }
+
+  // 转发给 Host（默认行为）
   const h = r.players[r.hostIndex];
   if (!h || h.ws.readyState !== WebSocket.OPEN) return sendError(ws, '房主断线');
   send(h.ws, { type:'from_client', playerIndex:i.playerIndex, payloadRaw: typeof msg.payload==='string'?msg.payload:JSON.stringify(msg.payload) });
