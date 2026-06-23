@@ -99,14 +99,11 @@ const httpServer = http.createServer((req, res) => {
   let serveGz = false;
   let st = null;
 
-  try {
-    if (acceptGzip) {
-      st = fs.statSync(gzPath);
-      if (st && st.isFile()) serveGz = true;
-    }
-    if (!serveGz) st = fs.statSync(fp);
-  } catch (_) {
-    st = null;
+  if (acceptGzip) {
+    try { st = fs.statSync(gzPath); if (st && st.isFile()) serveGz = true; } catch (_) {}
+  }
+  if (!serveGz) {
+    try { st = fs.statSync(fp); } catch (_) { st = null; }
   }
 
   if (!st || !st.isFile()) {
