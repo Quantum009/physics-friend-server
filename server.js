@@ -92,17 +92,47 @@ const httpServer = http.createServer((req, res) => {
 
   if (fp !== STATIC_DIR && !fp.startsWith(STATIC_DIR + path.sep)) { res.writeHead(403); return res.end(); }
 
-  fs.stat(fp, (err, st) => {
-    if (err || !st.isFile()) {
-      if (urlPath === '/index.html') return serveStatus(req, res);
-      res.writeHead(404); return res.end('Not Found');
+  // 客户端是否支持 gzip，未声明编码时默认支持（2026年所有浏览器均支持）
+  const ae = req.headers['accept-encoding'];
+  const acceptGzip = !ae || ae.includes('gzip');
+  const gzPath = fp + '.gz';
+  let serveGz = false;
+  let st = null;
+
+  try {
+    if (acceptGzip) {
+      st = fs.statSync(gzPath);
+      if (st && st.isFile()) serveGz = true;
     }
-    const ext = path.extname(fp).toLowerCase();
-    const ct = MIME[ext] || 'application/octet-stream';
-    const enc = encodingHeaders(fp);
-    res.writeHead(200, { 'Content-Type':ct, 'Cache-Control':'no-store, no-cache, must-revalidate', 'Pragma':'no-cache', 'Expires':'0', ...enc });
-    fs.createReadStream(fp).pipe(res);
+    if (!serveGz) st = fs.statSync(fp);
+  } catch (_) {
+    st = null;
+  }
+
+  if (!st || !st.isFile()) {
+    if (urlPath === '/index.html') return serveStatus(req, res);
+    res.writeHead(404); return res.end('Not Found');
+  }
+
+  const ext = path.extname(fp).toLowerCase();
+  const ct = MIME[ext] || 'application/octet-stream';
+  const enc = serveGz ? { 'Content-Encoding': 'gzip' } : encodingHeaders(fp);
+
+  // 缓存策略：Build/ 下的内容长期缓存（Unity 构建产物不变化），index.html 不缓存
+  const isBuild = urlPath.startsWith('/Build/');
+  const cc = isBuild
+    ? 'public, max-age=31536000, immutable'
+    : (urlPath === '/index.html'
+        ? 'no-store, no-cache, must-revalidate'
+        : 'public, max-age=300');
+
+  res.writeHead(200, {
+    'Content-Type': ct,
+    'Cache-Control': cc,
+    ...(urlPath === '/index.html' ? { 'Pragma': 'no-cache', 'Expires': '0' } : {}),
+    ...enc
   });
+  fs.createReadStream(serveGz ? gzPath : fp).pipe(res);
 });
 
 function serveStatus(req, res) {
