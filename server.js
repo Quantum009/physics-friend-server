@@ -42,6 +42,19 @@ const MIME = {
   '.data':'application/octet-stream', '.unityweb':'application/octet-stream',
 };
 
+// 取 Build/ 目录内最新文件的 mtime 作为版本号（毫秒转 36 进制，短且唯一）
+function getBuildVersion() {
+  const buildDir = path.join(STATIC_DIR, 'Build');
+  let latest = 0;
+  try {
+    for (const name of fs.readdirSync(buildDir)) {
+      const mtime = fs.statSync(path.join(buildDir, name)).mtimeMs;
+      if (mtime > latest) latest = mtime;
+    }
+  } catch (_) {}
+  return latest ? Math.floor(latest).toString(36) : null;
+}
+
 // Unity 压缩文件的 Content-Encoding
 function encodingHeaders(fp) {
   const h = {};
@@ -129,7 +142,22 @@ const httpServer = http.createServer((req, res) => {
     ...(urlPath === '/index.html' ? { 'Pragma': 'no-cache', 'Expires': '0' } : {}),
     ...enc
   });
-  fs.createReadStream(serveGz ? gzPath : fp).pipe(res);
+
+  // index.html 注入版本号，确保每次更新后 Build 文件 URL 变化 → 旧缓存自动失效
+  if (urlPath === '/index.html') {
+    const ver = getBuildVersion();
+    let html = fs.readFileSync(fp, 'utf-8');
+    if (ver) {
+      html = html
+        .replace('buildUrl + "/webgl.loader.js"',           `buildUrl + "/webgl.loader.js?v=${ver}"`)
+        .replace('buildUrl + "/webgl.data.unityweb"',       `buildUrl + "/webgl.data.unityweb?v=${ver}"`)
+        .replace('buildUrl + "/webgl.framework.js.unityweb"', `buildUrl + "/webgl.framework.js.unityweb?v=${ver}"`)
+        .replace('buildUrl + "/webgl.wasm.unityweb"',       `buildUrl + "/webgl.wasm.unityweb?v=${ver}"`);
+    }
+    res.end(html, 'utf-8');
+  } else {
+    fs.createReadStream(serveGz ? gzPath : fp).pipe(res);
+  }
 });
 
 function serveStatus(req, res) {
